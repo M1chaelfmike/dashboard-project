@@ -3,6 +3,8 @@ import type {ReactNode} from "react";
 import { Geist, Geist_Mono } from "next/font/google";
 import {AppRouterCacheProvider} from "@mui/material-nextjs/v16-appRouter";
 
+import InitColorSchemeScript  from "@mui/material/InitColorSchemeScript";
+
 import "./globals.css";
 import Providers from "./providers";
 
@@ -30,8 +32,16 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable}`}
+      suppressHydrationWarning
     >
+      <head>
+        <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+      </head>
       <body>
+        <InitColorSchemeScript
+          defaultMode="system"
+          attribute="class"
+        />
         <AppRouterCacheProvider options={{ enableCssLayer: true }}>
           <Providers>{children}</Providers>
         </AppRouterCacheProvider>

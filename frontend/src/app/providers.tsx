@@ -17,7 +17,11 @@ export default function Providers({
     children, 
 }: ProvidersProps) {
         return(
-            <ThemeProvider theme={theme}>
+            <ThemeProvider 
+            theme={theme}
+            defaultMode = 'system'
+            disableTransitionOnChange
+            >
                 <CssBaseline />
                 <AuthProvider>
                     {children}

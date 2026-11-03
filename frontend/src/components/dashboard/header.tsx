@@ -16,7 +16,7 @@ import {
     Typography,
 } from '@mui/material';
 
-import { useTheme } from '@mui/material/styles';
+import { useTheme, useColorScheme } from '@mui/material/styles';
 
 import MenuIcon from '@mui/icons-material/Menu';
 import LogoutIcon from '@mui/icons-material/Logout';
@@ -25,12 +25,18 @@ import type { AuthUser } from '@/lib/api/auth';
 
 import { DRAWER_WIDTH } from './sidebar';
 
+import LightModeOutlinedIcon from '@mui/icons-material/LightModeOutlined';
+import DarkModeOutlinedIcon from '@mui/icons-material/DarkModeOutlined';
+import BrightnessAutoOutlinedIcon from '@mui/icons-material/BrightnessAutoOutlined';
+
 interface HeaderProps {
     user: AuthUser | null;
     onMenuClick: () => void;
     onLogout: () => void | Promise<void>;
     isLoggingOut: boolean;
 }
+
+type ThemeMode = 'light' | 'dark' | 'system';
 
 export default function Header({
     user,
@@ -41,17 +47,39 @@ export default function Header({
 
     const theme = useTheme();
 
+    const { mode, setMode } = useColorScheme();
+
     const [anchorEl, setAnchorEl] =
+        useState<HTMLElement | null>(null);
+
+    const [themeAnchorEl, setThemeAnchorEl] =
         useState<HTMLElement | null>(null);
 
     const handleMenuClose = () => {
         setAnchorEl(null);
     };
 
+    const handleThemeMenuClose = () => {
+        setThemeAnchorEl(null);
+    };
+
+
     const handleLogout = () => {
         handleMenuClose();
         void onLogout();
     };
+
+    const handleThemeChange = (newMode: ThemeMode) => {
+        setMode(newMode);
+        handleThemeMenuClose();
+    };
+
+    const themeIcon = 
+        mode === 'dark' 
+        ? <DarkModeOutlinedIcon />
+        : mode === 'light'
+        ? <LightModeOutlinedIcon />
+        : <BrightnessAutoOutlinedIcon />; 
 
     return (
         <AppBar
@@ -95,6 +123,61 @@ export default function Header({
                 </Typography>
 
                 <Box sx={{ flexGrow: 1 }} />
+                {/* Theme Menu */}
+                <Tooltip title="Appearance">
+                    <IconButton
+                        onClick={(event) =>
+                            setThemeAnchorEl(event.currentTarget)
+                        }
+                        aria-label="Change appearance"
+                    >
+                        {themeIcon}
+                    </IconButton>   
+                </Tooltip>
+                <Menu
+                    anchorEl={themeAnchorEl}
+                    open={Boolean(themeAnchorEl)}
+                    onClose={handleThemeMenuClose}
+                    anchorOrigin={{
+                        vertical: 'bottom',
+                        horizontal: 'right',
+                    }}
+                    transformOrigin={{
+                        vertical: 'top',
+                        horizontal: 'right',
+                    }}
+                >
+                    <MenuItem
+                        selected={mode === 'system'}
+                        onClick={() => handleThemeChange('system')}
+                    >
+                        <BrightnessAutoOutlinedIcon
+                            fontSize="small"
+                            sx={{ mr: 1 }}
+                        />
+                        System
+                    </MenuItem>
+                    <MenuItem
+                        selected={mode === 'light'}
+                        onClick={() => handleThemeChange('light')}
+                    >
+                        <LightModeOutlinedIcon
+                            fontSize="small"
+                            sx={{ mr: 1 }}
+                        />
+                        Light
+                    </MenuItem>
+                    <MenuItem
+                        selected={mode === 'dark'}
+                        onClick={() => handleThemeChange('dark')}
+                    >
+                        <DarkModeOutlinedIcon
+                            fontSize="small"
+                            sx={{ mr: 1 }}
+                        />
+                        Dark
+                    </MenuItem>
+                </Menu>
 
                 {/* User Menu */}
                 <Tooltip title="Account">

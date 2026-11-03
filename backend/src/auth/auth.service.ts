@@ -33,7 +33,7 @@ export class AuthService {
         );
 
         if(existingUser){
-            throw new ConflictException('Email already exsists.');
+            throw new ConflictException('Email already exists.');
         }
 
         const passwordHash = await argon2.hash(dto.password,{
@@ -58,7 +58,7 @@ export class AuthService {
         }
     }   
 
-    async loginByEmail(dto: SignupByEmailDto){
+    async loginByEmail(dto: LoginByEmailDto){
         const user = await this.userService.findByEmail(dto.email);
 
         if(!user){
