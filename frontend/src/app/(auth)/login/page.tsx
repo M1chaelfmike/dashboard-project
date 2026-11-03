@@ -4,7 +4,7 @@
 import { useState, type FormEvent } from 'react';
 import NextLink from 'next/link';
 
-import {loginByEmail} from '@/lib/api/auth';
+import { useAuth } from '@/features/auth/use-auth';
 import { ApiError } from '@/lib/api/client';
 
 import { useRouter } from 'next/navigation';
@@ -33,6 +33,7 @@ interface LoginErrors {
 
 export default function LoginPage() {
   const router = useRouter();
+  const { login } = useAuth();
   // Form state
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -102,14 +103,14 @@ export default function LoginPage() {
     // 2. Call backend login api
     setIsSubmitting(true);
     try{
-      await loginByEmail({
+      await login({
         email: normalizedEmail,
         password,
       });
       // 3. Login successful
       setPassword('');
       router.replace('/dashboard');
-      
+
     }catch(error){
       // 4. Handle API error
       if(error instanceof ApiError){

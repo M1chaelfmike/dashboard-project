@@ -30,7 +30,7 @@ function getErrorMessage(
     payload: unknown,
     fallback: string,
 ): string {
-    if(typeof payload !== 'object' && payload !== null) {
+    if(typeof payload !== 'object' && payload === null) {
         return fallback;
     }
 

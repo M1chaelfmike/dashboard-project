@@ -1,4 +1,4 @@
-'user client';
+'use client';
 
 import type { ReactNode } from 'react';
 
@@ -6,6 +6,8 @@ import CssBaseline from '@mui/material/CssBaseline';
 import { ThemeProvider } from '@mui/material/styles';
 
 import theme from '../theme';
+
+import { AuthProvider } from '@/features/auth/auth-provider';
 
 interface ProvidersProps {
   children: ReactNode;
@@ -17,7 +19,9 @@ export default function Providers({
         return(
             <ThemeProvider theme={theme}>
                 <CssBaseline />
-                {children}
+                <AuthProvider>
+                    {children}
+                </AuthProvider>
                 </ThemeProvider>
         );
     }
