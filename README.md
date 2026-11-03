@@ -1,6 +1,4 @@
-# Supply Chain Management System
-
-**Project Status:** Phase 1 — Initial Framework Completed
+# Dashboard System
 
 ## 1. 项目简介
 
@@ -161,6 +159,17 @@ dashboard-project/
 
 使用 Material UI 建立基础管理系统界面。
 
+页面效果:
+
+loginpage:
+![Login](docs/screenshots/loginpage.png)
+
+signuppage:
+![Signup](docs/screenshots/signuppage.png)
+
+dashboard:
+![Dashboard](docs/screenshots/dashboardpage.png)
+
 目前包含：
 
 | Page | Status | Description |
@@ -267,50 +276,3 @@ Backend 数据库连接和 JWT 配置应根据实际环境填写在 `backend/.en
 - Dashboard：业务统计、订单概览及数据可视化。
 - Business Workflow：业务审批、状态转换及相关操作流程。
 
-目前尚未实现完整的 RBAC 权限管理机制，也未建立上述业务模块对应的数据库模型和 CRUD API。
-
-## 8. 后续开发计划
-
-### Phase 2 — Business Requirements & Data Modeling
-
-- 确认供应链业务需求。
-- 明确 Company、Order、User 之间的业务关系。
-- 设计数据库 ER Diagram。
-- 建立业务数据模型。
-- 确定 API 接口及数据流转规则。
-
-### Phase 3 — Backend Business Development
-
-- 实现 Company 管理 API。
-- 实现 Order 管理 API。
-- 完善 User 管理功能。
-- 实现业务状态流转。
-- 根据需求增加角色和权限管理。
-
-### Phase 4 — Frontend Business Development
-
-- 完善 Company 管理页面。
-- 完善 Order 管理页面。
-- 完善 User 管理页面。
-- 建立 Dashboard 数据统计与可视化。
-- 完成前后端业务联调。
-
-### Phase 5 — Testing & Deployment
-
-- 完善单元测试与集成测试。
-- 进行业务流程测试。
-- 完善异常处理和日志管理。
-- 配置生产环境。
-- 完成项目部署。
-
----
-
-## 9. Current Milestone
-
-**Phase 1 — Initial Framework Completed**
-
-当前已完成项目基础环境、前后端架构、数据库连接、用户认证系统、全局认证状态管理以及 Dashboard 基础界面。
-
-项目已经具备继续开展业务开发的基础条件。
-
-下一阶段将根据实际业务需求完善数据库设计、后端业务 API 和前端管理功能。
