@@ -166,9 +166,19 @@ export function useCompanies() {
           !cancelled &&
           requestId === requestIdRef.current
         ) {
-          setErrorStatus(
-            err instanceof ApiError ? err.status : null,
+          const status = err instanceof ApiError ? err.status : null;
+          const accessDenied = status === 401 || status === 403;
+
+          // A failed retry cannot restore access. Only a successful read can.
+          setErrorStatus((previous) =>
+            !accessDenied && (previous === 401 || previous === 403)
+              ? previous
+              : status,
           );
+
+          if (accessDenied) {
+            setResult({ ...INITIAL_RESULT, page: page + 1, pageSize });
+          }
 
           setError(
             err instanceof Error

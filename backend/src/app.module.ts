@@ -8,6 +8,8 @@ import { UsersModule } from './users/users.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { CompaniesModule } from './companies/companies.module.js';
 import { UsersManagementModule } from './users/management/users-management.module.js';
+import { DashboardModule } from './dashboard/dashboard.module.js';
+
 @Module({
   imports: [
       ConfigModule.forRoot({
@@ -18,6 +20,7 @@ import { UsersManagementModule } from './users/management/users-management.modul
       AuthModule,
       CompaniesModule,
       UsersManagementModule,
+      DashboardModule,
     ],
   controllers: [AppController],
   providers: [AppService],

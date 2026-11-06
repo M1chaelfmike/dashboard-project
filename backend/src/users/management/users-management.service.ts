@@ -5,6 +5,8 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  HttpException,
+  Logger,
 
 } from '@nestjs/common';
 
@@ -18,6 +20,9 @@ import argon2 from 'argon2';
 import { CreateUserDto } from './dto/create-user.dto.js';
 import { ListUsersQueryDto } from './dto/list-users-query.dto.js';
 import { UpdateUserDto } from './dto/update-user.dto.js';
+
+import { AuditLogsService } from '../../audit-logs/audit-logs.service.js';
+import type { AuditActorContext } from '../../audit-logs/audit-logs.service.js';
 
 import { Prisma } from '../../generated/prisma/client.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
@@ -49,65 +54,126 @@ type StatusAction = keyof typeof statusTransitions;
 
 @Injectable()
 export class UsersManagementService {
+  private readonly logger = new Logger(
+    UsersManagementService.name,
+  );
+
   constructor(
     private readonly prisma: PrismaService,
+    private readonly auditLogsService: AuditLogsService,
   ) {}
+
+
+  private async recordFailure(
+    action: string,
+    context: AuditActorContext,
+    targetId: string | null,
+    targetName: string | null,
+    error: unknown,
+  ): Promise<void> {
+    try {
+      await this.auditLogsService.record({
+        category: 'BUSINESS_ACTIVITY',
+        action,
+        result: 'FAILURE',
+
+        actorId: context.actorId,
+        actorName: context.actorName,
+        actorRole: context.actorRole,
+
+        targetType: 'USER',
+        targetId,
+        targetName,
+
+        metadata: {
+          errorType:
+            error instanceof Error
+              ? error.name
+              : 'UnknownError',
+
+          ...(error instanceof HttpException
+            ? { httpStatus: error.getStatus() }
+            : {}),
+
+          ...(error instanceof Prisma.PrismaClientKnownRequestError
+            ? { prismaCode: error.code }
+            : {}),
+        },
+
+        ipAddress: context.ipAddress,
+        userAgent: context.userAgent,
+      });
+    } catch (auditError: unknown) {
+      this.logger.error(
+        'Failed to persist failure audit log.',
+        auditError instanceof Error
+          ? auditError.stack
+          : String(auditError),
+      );
+    }
+  }
+
+
 
   async changeStatus(
     userId: string,
     action: StatusAction,
-    operatorId: string,
+    context: AuditActorContext,
   ) {
     const transition = statusTransitions[action];
 
-    // Prevent administrator self-suspension.
-    if (
-      action === 'suspend' &&
-      userId.toLowerCase() === operatorId.toLowerCase()
-    ) {
-      throw new ForbiddenException(
-        'You cannot suspend your own account.',
-      );
-    }
+    const auditActions: Record<StatusAction, string> = {
+      approve: 'APPROVE_USER',
+      reject: 'REJECT_USER',
+      suspend: 'SUSPEND_USER',
+      reactivate: 'REACTIVATE_USER',
+    };
+
+    const auditAction = auditActions[action];
 
     try {
+      if (
+        action === 'suspend' &&
+        userId.toLowerCase() === context.actorId.toLowerCase()
+      ) {
+        throw new ForbiddenException(
+          'You cannot suspend your own account.',
+        );
+      }
+
       const user = await this.prisma.$transaction(
         async (tx) => {
-          // 1. Find target user.
           const target = await tx.user.findUnique({
             where: { id: userId },
             select: {
               id: true,
+              name: true,
+              email: true,
               role: true,
               status: true,
             },
           });
 
           if (!target) {
-            throw new NotFoundException(
-              'User not found.',
-            );
+            throw new NotFoundException('User not found.');
           }
 
-          // 2. Validate allowed status transition.
           if (target.status !== transition.from) {
             throw new ConflictException(
               `Cannot ${action} user with status ${target.status}.`,
             );
           }
 
-          // 3. Protect the last active administrator.
           if (
             action === 'suspend' &&
             target.role === 'ADMIN'
           ) {
-            const activeAdminCount =
-              await tx.user.count({
-                where: {
-                  role: 'ADMIN',
-                  status: 'ACTIVE',
-                },
-              });
+            const activeAdminCount = await tx.user.count({
+              where: {
+                role: 'ADMIN',
+                status: 'ACTIVE',
+              },
+            });
 
             if (activeAdminCount <= 1) {
               throw new ConflictException(
@@ -116,7 +182,6 @@ export class UsersManagementService {
             }
           }
 
-          // 4. Update only if status still matches.
           const result = await tx.user.updateMany({
             where: {
               id: userId,
@@ -133,8 +198,7 @@ export class UsersManagementService {
             );
           }
 
-          // 5. Return safe user information.
-          return tx.user.findUniqueOrThrow({
+          const updatedUser = await tx.user.findUniqueOrThrow({
             where: { id: userId },
             select: {
               id: true,
@@ -146,6 +210,39 @@ export class UsersManagementService {
               updatedAt: true,
             },
           });
+
+          // Write audit log in the same transaction.
+          await this.auditLogsService.record(
+            {
+              category: 'BUSINESS_ACTIVITY',
+              action: auditAction,
+              result: 'SUCCESS',
+
+              actorId: context.actorId,
+              actorName: context.actorName,
+              actorRole: context.actorRole,
+
+              targetType: 'USER',
+              targetId: updatedUser.id,
+              targetName:
+                updatedUser.name ?? updatedUser.email,
+
+              metadata: {
+                before: {
+                  status: target.status,
+                },
+                after: {
+                  status: updatedUser.status,
+                },
+              },
+
+              ipAddress: context.ipAddress,
+              userAgent: context.userAgent,
+            },
+            tx,
+          );
+
+          return updatedUser;
         },
         {
           isolationLevel:
@@ -158,6 +255,14 @@ export class UsersManagementService {
         user,
       };
     } catch (error: unknown) {
+      await this.recordFailure(
+        auditAction,
+        context,
+        userId,
+        userId,
+        error,
+      );
+
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2034'
@@ -170,6 +275,7 @@ export class UsersManagementService {
       throw error;
     }
   }
+
 
   async findAll(query: ListUsersQueryDto) {
 
@@ -293,71 +399,116 @@ export class UsersManagementService {
         return user;
     }
 
-    async create(createUserDto: CreateUserDto){
+
+    async create(
+      createUserDto: CreateUserDto,
+      context: AuditActorContext,
+    ) {
       const name = createUserDto.name.trim();
       const email = createUserDto.email.trim().toLowerCase();
 
-      const existingUser = await this.prisma.user.findUnique({
-        where: { email },
-        select:{id:true},
-      });
-
-      if(existingUser){
-        throw new ConflictException(
-          'Email already exists.',
-        );
-      }
-
-      const passwordHash = await argon2.hash(
-        createUserDto.password,
-        {
-          type: argon2.argon2id,
-        },
-      );
-
-      try{
-        const user = await this.prisma.user.create({
-          data:{
-            name,
-            email,
-            passwordHash,
-            role: createUserDto.role ?? 'MEMBER',
-            status: 'ACTIVE',
-          },
-          select:{
-            id:true,
-            name:true,
-            email:true,
-            role:true,
-            status:true,
-            createdAt:true,
-            updatedAt:true,
-          },
+      try {
+        const existingUser = await this.prisma.user.findUnique({
+          where: { email },
+          select: { id: true },
         });
+
+        if (existingUser) {
+          throw new ConflictException('Email already exists.');
+        }
+
+        const passwordHash = await argon2.hash(
+          createUserDto.password,
+          {
+            type: argon2.argon2id,
+          },
+        );
+
+        const user = await this.prisma.$transaction(
+          async (tx) => {
+            const created = await tx.user.create({
+              data: {
+                name,
+                email,
+                passwordHash,
+                role: createUserDto.role ?? 'MEMBER',
+                status: 'ACTIVE',
+              },
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                role: true,
+                status: true,
+                createdAt: true,
+                updatedAt: true,
+              },
+            });
+
+            await this.auditLogsService.record(
+              {
+                category: 'BUSINESS_ACTIVITY',
+                action: 'CREATE_USER',
+                result: 'SUCCESS',
+
+                actorId: context.actorId,
+                actorName: context.actorName,
+                actorRole: context.actorRole,
+
+                targetType: 'USER',
+                targetId: created.id,
+                targetName: created.name ?? created.email,
+
+                metadata: {
+                  after: {
+                    name: created.name,
+                    email: created.email,
+                    role: created.role,
+                    status: created.status,
+                  },
+                },
+
+                ipAddress: context.ipAddress,
+                userAgent: context.userAgent,
+              },
+              tx,
+            );
+
+            return created;
+          },
+        );
 
         return {
           message: 'User created successfully.',
           user,
         };
-      }catch(error:unknown){
-        if(
+      } catch (error: unknown) {
+        await this.recordFailure(
+          'CREATE_USER',
+          context,
+          null,
+          email,
+          error,
+        );
+
+        if (
           error instanceof Prisma.PrismaClientKnownRequestError &&
           error.code === 'P2002'
-        ){
-          throw new ConflictException(
-            'Email already exists.',
-          );
+        ) {
+          throw new ConflictException('Email already exists.');
         }
 
         throw error;
       }
     }
 
+
     async update(
       userId: string,
       dto: UpdateUserDto,
-      operatorId: string,
-    ){
+      context: AuditActorContext,
+    ) {
+      const operatorId = context.actorId;
 
       if(
         dto.name === undefined &&
@@ -463,6 +614,42 @@ export class UsersManagementService {
               },
             });
 
+            await this.auditLogsService.record(
+              {
+                category: 'BUSINESS_ACTIVITY',
+                action: 'UPDATE_USER',
+                result: 'SUCCESS',
+
+                actorId: context.actorId,
+                actorName: context.actorName,
+                actorRole: context.actorRole,
+
+                targetType: 'USER',
+                targetId: user.id,
+                targetName: user.name ?? user.email,
+
+                metadata: {
+                  before: {
+                    name: target.name,
+                    email: target.email,
+                    role: target.role,
+                    status: target.status,
+                  },
+                  after: {
+                    name: user.name,
+                    email: user.email,
+                    role: user.role,
+                    status: user.status,
+                  },
+                  changedFields: Object.keys(data),
+                },
+
+                ipAddress: context.ipAddress,
+                userAgent: context.userAgent,
+              },
+              tx,
+            );
+
             return {
               message: 'User updated successfully.',
               user,
@@ -473,6 +660,13 @@ export class UsersManagementService {
             },
         );
       }catch(error:unknown){
+        await this.recordFailure(
+          'UPDATE_USER',
+          context,
+          userId,
+          userId,
+          error,
+        );
         if(
           error instanceof Prisma.PrismaClientKnownRequestError
         ){
@@ -499,7 +693,11 @@ export class UsersManagementService {
       }
     }
 
-    async remove(userId: string, operatorId: string) {
+    async remove(
+      userId: string,
+      context: AuditActorContext,
+    ) {
+      const operatorId = context.actorId;
       try{
         return await this.prisma.$transaction(
           async (tx) => {
@@ -547,6 +745,35 @@ export class UsersManagementService {
               where: { id: userId },
             });
 
+            await this.auditLogsService.record(
+              {
+                category: 'BUSINESS_ACTIVITY',
+                action: 'DELETE_USER',
+                result: 'SUCCESS',
+
+                actorId: context.actorId,
+                actorName: context.actorName,
+                actorRole: context.actorRole,
+
+                targetType: 'USER',
+                targetId: target.id,
+                targetName: target.name ?? target.email,
+
+                metadata: {
+                  before: {
+                    name: target.name,
+                    email: target.email,
+                    role: target.role,
+                    status: target.status,
+                  },
+                },
+
+                ipAddress: context.ipAddress,
+                userAgent: context.userAgent,
+              },
+              tx,
+            );
+
             return {
               message: 'User deleted successfully.',
               userId,
@@ -557,6 +784,13 @@ export class UsersManagementService {
             },
         );
       }catch (error: unknown) {
+        await this.recordFailure(
+          'DELETE_USER',
+          context,
+          userId,
+          userId,
+          error,
+        );
         if (
           error instanceof Prisma.PrismaClientKnownRequestError
         ) {
@@ -584,7 +818,11 @@ export class UsersManagementService {
 
     }
 
-    async removeMany(userIds: string[], operatorId: string) {
+    async removeMany(
+      userIds: string[],
+      context: AuditActorContext,
+    ) {
+      const operatorId = context.actorId;
 
       // PostgreSQL UUID identity is case-insensitive; normalize before deduplication.
       const ids = [...new Set(userIds.map((id) => id.toLowerCase()))];
@@ -676,6 +914,37 @@ export class UsersManagementService {
               );
             }
 
+            await this.auditLogsService.record(
+              {
+                category: 'BUSINESS_ACTIVITY',
+                action: 'BULK_DELETE_USERS',
+                result: 'SUCCESS',
+
+                actorId: context.actorId,
+                actorName: context.actorName,
+                actorRole: context.actorRole,
+
+                targetType: 'USER',
+                targetId: null,
+                targetName: `${result.count} users`,
+
+                metadata: {
+                  deletedCount: result.count,
+                  deletedUsers: targets.map((user) => ({
+                    id: user.id,
+                    name: user.name,
+                    email: user.email,
+                    role: user.role,
+                    status: user.status,
+                  })),
+                },
+
+                ipAddress: context.ipAddress,
+                userAgent: context.userAgent,
+              },
+              tx,
+            );
+
             return {
               message: 'Users deleted successfully.',
               deletedCount: result.count,
@@ -689,6 +958,14 @@ export class UsersManagementService {
         );
 
       } catch (error: unknown) {
+
+        await this.recordFailure(
+          'BULK_DELETE_USERS',
+          context,
+          null,
+          `${ids.length} users`,
+          error,
+        );
 
         // 7. Handle Prisma errors
         if (

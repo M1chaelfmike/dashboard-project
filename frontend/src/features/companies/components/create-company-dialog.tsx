@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 
 import {
   Alert,
@@ -32,6 +32,7 @@ import type {
 } from '@/lib/api/companies';
 
 import { ApiError } from '@/lib/api/client';
+import { getCompanyTextError } from '@/features/companies/validation';
 
 interface CreateCompanyDialogProps {
   open: boolean;
@@ -72,6 +73,7 @@ export default function CreateCompanyDialog({
     useState<Company | null>(null);
 
   const [parentSearch, setParentSearch] = useState('');
+  const [parentInputValue, setParentInputValue] = useState('');
   const [parentOptions, setParentOptions] = useState<Company[]>([]);
   const [parentTotal, setParentTotal] = useState(0);
 
@@ -79,12 +81,20 @@ export default function CreateCompanyDialog({
   const [parentError, setParentError] = useState('');
 
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
   const [submitError, setSubmitError] = useState('');
+
+  const textErrors = {
+    companyName: getCompanyTextError('companyName', form.companyName),
+    country: getCompanyTextError('country', form.country),
+    city: getCompanyTextError('city', form.city),
+  };
 
   const resetForm = () => {
     setForm(INITIAL_FORM);
     setParentCompany(null);
     setParentSearch('');
+    setParentInputValue('');
     setParentOptions([]);
     setParentTotal(0);
     setParentError('');
@@ -92,7 +102,7 @@ export default function CreateCompanyDialog({
   };
 
   const handleClose = () => {
-    if (submitting) return;
+    if (submittingRef.current) return;
 
     resetForm();
     onClose();
@@ -159,7 +169,7 @@ export default function CreateCompanyDialog({
   ) => {
     event.preventDefault();
 
-    if (submitting) return;
+    if (submittingRef.current) return;
 
     setSubmitError('');
 
@@ -227,6 +237,13 @@ export default function CreateCompanyDialog({
       return;
     }
 
+    const textError = textErrors.companyName || textErrors.country || textErrors.city;
+    if (textError) {
+      setSubmitError(textError);
+      return;
+    }
+
+    submittingRef.current = true;
     setSubmitting(true);
 
     try {
@@ -244,6 +261,7 @@ export default function CreateCompanyDialog({
             : 'Failed to create company.',
       );
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };
@@ -296,7 +314,8 @@ export default function CreateCompanyDialog({
               required
               fullWidth
               size="small"
-              slotProps={{ htmlInput: { maxLength: 255 } }}
+              error={Boolean(textErrors.companyName)}
+              helperText={textErrors.companyName}
             />
 
             <FormControl fullWidth size="small">
@@ -314,6 +333,7 @@ export default function CreateCompanyDialog({
                   updateField('level', nextLevel);
                   setParentCompany(null);
                   setParentSearch('');
+                  setParentInputValue('');
                   setSubmitError('');
                 }}
               >
@@ -328,10 +348,11 @@ export default function CreateCompanyDialog({
             <Autocomplete
               fullWidth
               size="small"
+              clearOnBlur={false}
               options={parentOptions}
               value={parentCompany}
               loading={parentsLoading}
-              inputValue={parentSearch}
+              inputValue={parentInputValue}
               getOptionLabel={(option) =>
                 `${option.companyName} (${option.companyCode})`
               }
@@ -339,12 +360,19 @@ export default function CreateCompanyDialog({
                 option.companyCode === value.companyCode
               }
               onInputChange={(_, value, reason) => {
+                setParentInputValue(value);
+
                 if (reason === 'input' || reason === 'clear') {
                   setParentSearch(value);
+                  setParentCompany(null);
                 }
               }}
               onChange={(_, value) => {
                 setParentCompany(value);
+                setParentInputValue(
+                  value ? `${value.companyName} (${value.companyCode})` : '',
+                );
+                setParentSearch('');
                 setSubmitError('');
               }}
               noOptionsText="No parent companies found."
@@ -388,7 +416,8 @@ export default function CreateCompanyDialog({
               required
               fullWidth
               size="small"
-              slotProps={{ htmlInput: { maxLength: 100 } }}
+              error={Boolean(textErrors.country)}
+              helperText={textErrors.country}
             />
 
             <TextField
@@ -400,7 +429,8 @@ export default function CreateCompanyDialog({
               required
               fullWidth
               size="small"
-              slotProps={{ htmlInput: { maxLength: 100 } }}
+              error={Boolean(textErrors.city)}
+              helperText={textErrors.city}
             />
 
             <TextField

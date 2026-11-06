@@ -4,18 +4,85 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  HttpException,
+  Logger,
 } from '@nestjs/common';
+
+import { AuditLogsService } from '../audit-logs/audit-logs.service.js';
+import type { AuditActorContext } from '../audit-logs/audit-logs.service.js';
 
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ListCompaniesQueryDto } from './dto/list-companies-query.dto.js';
 import { CreateCompanyDto } from './dto/create-company.dto.js';
 import { UpdateCompanyDto } from './dto/update-company.dto.js';
+
 @Injectable()
 export class CompaniesService {
+  private readonly logger = new Logger(
+    CompaniesService.name,
+  );
+
   constructor(
     private readonly prisma: PrismaService,
+    private readonly auditLogsService: AuditLogsService,
   ) {}
+
+  /**
+   * Record failed company operations independently.
+   * Failure audit must not replace the original business error.
+   */
+  private async recordFailure(
+    action: string,
+    context: AuditActorContext,
+    targetId: string | null,
+    targetName: string | null,
+    error: unknown,
+  ): Promise<void> {
+    try {
+      await this.auditLogsService.record({
+        category: 'BUSINESS_ACTIVITY',
+        action,
+        result: 'FAILURE',
+
+        actorId: context.actorId,
+        actorName: context.actorName,
+        actorRole: context.actorRole,
+
+        targetType: 'COMPANY',
+        targetId,
+        targetName,
+
+        metadata: {
+          errorType:
+            error instanceof Error
+              ? error.name
+              : 'UnknownError',
+
+          ...(error instanceof HttpException
+            ? { httpStatus: error.getStatus() }
+            : {}),
+
+          ...(error instanceof Prisma.PrismaClientKnownRequestError
+            ? { prismaCode: error.code }
+            : {}),
+        },
+
+        ipAddress: context.ipAddress,
+        userAgent: context.userAgent,
+      });
+    } catch (auditError: unknown) {
+      this.logger.error(
+        'Failed to persist company failure audit log.',
+        auditError instanceof Error
+          ? auditError.stack
+          : String(auditError),
+      );
+    }
+  }
+
+  // Keep findAll() and findOne() unchanged below.
+
 
   async findAll(query: ListCompaniesQueryDto) {
     // 1. Parse pagination
@@ -200,14 +267,18 @@ export class CompaniesService {
     };
   }
 
-  async create(dto: CreateCompanyDto) {
-    if (dto.companyCode === dto.parentCompanyCode) {
-      throw new BadRequestException(
-        'A company cannot be its own parent.',
-      );
-    }
 
+  async create(
+    dto: CreateCompanyDto,
+    context: AuditActorContext,
+  ) {
     try {
+      if (dto.companyCode === dto.parentCompanyCode) {
+        throw new BadRequestException(
+          'A company cannot be its own parent.',
+        );
+      }
+
       const company = await this.prisma.$transaction(
         async (tx) => {
           // 1. Check duplicate company code
@@ -230,6 +301,7 @@ export class CompaniesService {
             },
             select: {
               companyCode: true,
+              companyName: true,
               level: true,
             },
           });
@@ -269,6 +341,41 @@ export class CompaniesService {
             },
           });
 
+          // 6. Write audit log in the same transaction
+          await this.auditLogsService.record(
+            {
+              category: 'BUSINESS_ACTIVITY',
+              action: 'CREATE_COMPANY',
+              result: 'SUCCESS',
+
+              actorId: context.actorId,
+              actorName: context.actorName,
+              actorRole: context.actorRole,
+
+              targetType: 'COMPANY',
+              targetId: created.companyCode,
+              targetName: created.companyName,
+
+              metadata: {
+                after: {
+                  companyCode: created.companyCode,
+                  companyName: created.companyName,
+                  level: created.level,
+                  parentCompanyCode: dto.parentCompanyCode,
+                  country: created.country,
+                  city: created.city,
+                  foundedYear: created.foundedYear,
+                  annualRevenue: created.annualRevenue,
+                  employees: created.employees,
+                },
+              },
+
+              ipAddress: context.ipAddress,
+              userAgent: context.userAgent,
+            },
+            tx,
+          );
+
           return created;
         },
       );
@@ -287,6 +394,14 @@ export class CompaniesService {
             : null,
       };
     } catch (error: unknown) {
+      await this.recordFailure(
+        'CREATE_COMPANY',
+        context,
+        dto.companyCode ?? null,
+        dto.companyName ?? null,
+        error,
+      );
+
       if (
         error instanceof Prisma.PrismaClientKnownRequestError
       ) {
@@ -308,24 +423,37 @@ export class CompaniesService {
   }
 
 
-  async update(companyCode: string, dto: UpdateCompanyDto) {
-    const hasAtLeastOneField = Object.values(dto).some(
-      (value) => value !== undefined,
-    );
 
-    if(!hasAtLeastOneField){
-        throw new BadRequestException(
-             'At least one field must be provided.',
-        );
-    }
 
+  async update(
+    companyCode: string,
+    dto: UpdateCompanyDto,
+    context: AuditActorContext,
+  ) {
     try {
+      const hasAtLeastOneField = Object.values(dto).some(
+        (value) => value !== undefined,
+      );
+
+      if (!hasAtLeastOneField) {
+        throw new BadRequestException(
+          'At least one field must be provided.',
+        );
+      }
+
       return await this.prisma.$transaction(async (tx) => {
-        // 1. Find the existing company and relationship
+        // 1. Find existing company and relationship
         const current = await tx.company.findUnique({
           where: { companyCode },
           select: {
+            companyCode: true,
+            companyName: true,
             level: true,
+            country: true,
+            city: true,
+            foundedYear: true,
+            annualRevenue: true,
+            employees: true,
             ownRelationship: {
               select: {
                 parentCompanyCode: true,
@@ -345,11 +473,13 @@ export class CompaniesService {
         const currentParent =
           current.ownRelationship?.parentCompanyCode ?? null;
 
-        // 2. Protect the root company
+        // 2. Protect root company
         if (
           current.level === 1 &&
-          (dto.level !== undefined ||
-            dto.parentCompanyCode !== undefined)
+          (
+            dto.level !== undefined ||
+            dto.parentCompanyCode !== undefined
+          )
         ) {
           throw new BadRequestException(
             'Root company hierarchy cannot be modified.',
@@ -365,7 +495,7 @@ export class CompaniesService {
           );
         }
 
-        // 3. Prevent a company from parenting itself
+        // 3. Prevent self-parenting
         if (dto.parentCompanyCode === companyCode) {
           throw new BadRequestException(
             'A company cannot be its own parent.',
@@ -391,7 +521,7 @@ export class CompaniesService {
         const nextParent =
           dto.parentCompanyCode ?? currentParent;
 
-        // 5. Validate the new or existing parent
+        // 5. Validate new or existing parent
         if (nextLevel > 1) {
           if (!nextParent) {
             throw new BadRequestException(
@@ -479,7 +609,69 @@ export class CompaniesService {
           });
         }
 
-        // 8. Return the updated company
+        // 8. Build audit snapshots
+        const before = {
+          companyCode: current.companyCode,
+          companyName: current.companyName,
+          level: current.level,
+          parentCompanyCode: currentParent,
+          country: current.country,
+          city: current.city,
+          foundedYear: current.foundedYear,
+          annualRevenue: current.annualRevenue,
+          employees: current.employees,
+        };
+
+        const after = {
+          companyCode: updated.companyCode,
+          companyName: updated.companyName,
+          level: updated.level,
+          parentCompanyCode: nextParent,
+          country: updated.country,
+          city: updated.city,
+          foundedYear: updated.foundedYear,
+          annualRevenue: updated.annualRevenue,
+          employees: updated.employees,
+        };
+
+        const changedFields = Object.keys(before).filter(
+          (field) =>
+            JSON.stringify(
+              before[field as keyof typeof before],
+            ) !==
+            JSON.stringify(
+              after[field as keyof typeof after],
+            ),
+        );
+
+        // 9. Write audit log in the same transaction
+        await this.auditLogsService.record(
+          {
+            category: 'BUSINESS_ACTIVITY',
+            action: 'UPDATE_COMPANY',
+            result: 'SUCCESS',
+
+            actorId: context.actorId,
+            actorName: context.actorName,
+            actorRole: context.actorRole,
+
+            targetType: 'COMPANY',
+            targetId: updated.companyCode,
+            targetName: updated.companyName,
+
+            metadata: {
+              before,
+              after,
+              changedFields,
+            },
+
+            ipAddress: context.ipAddress,
+            userAgent: context.userAgent,
+          },
+          tx,
+        );
+
+        // 10. Return existing response structure
         return {
           ...updated,
           parentCompanyCode: nextParent,
@@ -495,6 +687,14 @@ export class CompaniesService {
         };
       });
     } catch (error: unknown) {
+      await this.recordFailure(
+        'UPDATE_COMPANY',
+        context,
+        companyCode,
+        companyCode,
+        error,
+      );
+
       if (
         error instanceof Prisma.PrismaClientKnownRequestError
       ) {
@@ -515,67 +715,133 @@ export class CompaniesService {
     }
   }
 
-  async remove(companyCode: string) {
-    try{
-      return await this.prisma.$transaction(async (tx) => {
 
+
+  async remove(
+    companyCode: string,
+    context: AuditActorContext,
+  ) {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        // 1. Get company snapshot before deletion
         const company = await tx.company.findUnique({
           where: { companyCode },
           select: {
-            level: true,
             companyCode: true,
+            companyName: true,
+            level: true,
+            country: true,
+            city: true,
+            foundedYear: true,
+            annualRevenue: true,
+            employees: true,
+            ownRelationship: {
+              select: {
+                parentCompanyCode: true,
+              },
+            },
           },
         });
 
-        if(!company){
+        if (!company) {
           throw new NotFoundException(
             `Company ${companyCode} not found.`,
           );
         }
 
-        if(company.level === 1){
+        if (company.level === 1) {
           throw new BadRequestException(
             'Root company cannot be deleted.',
           );
         }
 
-        const childCount = await tx.companyRelationship.count({
-          where: {
-            parentCompanyCode: companyCode,
-          },
-        });
+        // 2. Prevent deleting companies with children
+        const childCount =
+          await tx.companyRelationship.count({
+            where: {
+              parentCompanyCode: companyCode,
+            },
+          });
 
-        if(childCount > 0){
+        if (childCount > 0) {
           throw new ConflictException(
             `Cannot delete company with ${childCount} child companies.`,
           );
         }
 
+        // 3. Delete company
         await tx.company.delete({
           where: { companyCode },
         });
+
+        // 4. Write audit log before transaction commits
+        await this.auditLogsService.record(
+          {
+            category: 'BUSINESS_ACTIVITY',
+            action: 'DELETE_COMPANY',
+            result: 'SUCCESS',
+
+            actorId: context.actorId,
+            actorName: context.actorName,
+            actorRole: context.actorRole,
+
+            targetType: 'COMPANY',
+            targetId: company.companyCode,
+            targetName: company.companyName,
+
+            metadata: {
+              before: {
+                companyCode: company.companyCode,
+                companyName: company.companyName,
+                level: company.level,
+                parentCompanyCode:
+                  company.ownRelationship?.parentCompanyCode ?? null,
+                country: company.country,
+                city: company.city,
+                foundedYear: company.foundedYear,
+                annualRevenue: company.annualRevenue,
+                employees: company.employees,
+              },
+            },
+
+            ipAddress: context.ipAddress,
+            userAgent: context.userAgent,
+          },
+          tx,
+        );
 
         return {
           message: 'Company deleted successfully.',
           companyCode,
         };
       });
-    }catch(error: unknown){
+    } catch (error: unknown) {
+      await this.recordFailure(
+        'DELETE_COMPANY',
+        context,
+        companyCode,
+        companyCode,
+        error,
+      );
 
-      if(error instanceof Prisma.PrismaClientKnownRequestError){
-        if(error.code === 'P2003'){
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError
+      ) {
+        if (error.code === 'P2003') {
           throw new ConflictException(
             'Company is referenced by other records and cannot be deleted.',
           );
         }
 
-        if(error.code === 'P2025'){
+        if (error.code === 'P2025') {
           throw new NotFoundException(
             `Company ${companyCode} not found.`,
           );
         }
       }
+
       throw error;
     }
   }
+
 }

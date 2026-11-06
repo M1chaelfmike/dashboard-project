@@ -21,6 +21,24 @@ enum UserStatus {
   REJECTED
 }
 
+// Audit log categories
+enum AuditLogCategory {
+  BUSINESS_ACTIVITY
+  AUTHENTICATION
+  SECURITY_EVENT
+  DATA_ACCESS
+
+  @@map("audit_log_category")
+}
+
+// Audit operation result
+enum AuditLogResult {
+  SUCCESS
+  FAILURE
+
+  @@map("audit_log_result")
+}
+
 model User {
   id String @id @default(uuid()) @db.Uuid
 
@@ -82,4 +100,42 @@ model CompanyRelationship {
   // Index
   @@index([parentCompanyCode], map: "company_relationships_parent_idx")
   @@map("company_relationships")
+}
+
+// Centralized audit log
+model AuditLog {
+  id String @id @default(uuid()) @db.Uuid
+
+  // Classification
+  category AuditLogCategory
+  action   String           @db.VarChar(100)
+  result   AuditLogResult
+
+  // Operator snapshot
+  actorId   String? @map("actor_id") @db.VarChar(64)
+  actorName String? @map("actor_name") @db.VarChar(100)
+  actorRole String? @map("actor_role") @db.VarChar(20)
+
+  // Target resource snapshot
+  targetType String? @map("target_type") @db.VarChar(50)
+  targetId   String? @map("target_id") @db.VarChar(128)
+  targetName String? @map("target_name") @db.VarChar(255)
+
+  // Additional information
+  metadata  Json?   @db.JsonB
+  ipAddress String? @map("ip_address") @db.VarChar(45)
+  userAgent String? @map("user_agent") @db.Text
+
+  // Timestamp
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Dashboard query index
+  @@index([category, result, createdAt(sort: Desc)], map: "audit_logs_category_result_created_at_idx")
+  // Operator history index
+  @@index([actorId, createdAt(sort: Desc)], map: "audit_logs_actor_created_at_idx")
+  // Target resource history index
+  @@index([targetType, targetId, createdAt(sort: Desc)], map: "audit_logs_target_created_at_idx")
+  // Recent activity query index
+  @@index([category, createdAt(sort: Desc)], map: "audit_logs_category_created_at_idx")
+  @@map("audit_logs")
 }

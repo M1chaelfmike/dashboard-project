@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useState, type ReactNode } from 'react';
+import { useRef, useState } from 'react';
 
 import {
   Alert,
@@ -37,19 +37,73 @@ import type {
 
 import { ApiError } from '@/lib/api/client';
 
-function formatNumber(value: number): string {
-  return new Intl.NumberFormat('en-US').format(value);
-}
-
-
-
 export default function CompanyPage() {
   // Authentication and permissions
-  const { user, isLoading: authLoading } = useAuth();
+  const { user, isLoading: authLoading, refreshUser } = useAuth();
 
   const permissions = getCompanyPermissions(user);
 
-  // Company list
+  const companyList = useCompanies();
+  const [refreshingAccess, setRefreshingAccess] = useState(false);
+  const accessRefreshInFlight = useRef(false);
+
+  const handleRetryAccess = async () => {
+    if (accessRefreshInFlight.current || companyList.loading) return;
+
+    accessRefreshInFlight.current = true;
+    setRefreshingAccess(true);
+
+    try {
+      const currentUser = await refreshUser();
+      if (getCompanyPermissions(currentUser).canView) companyList.refresh();
+    } catch {
+      // The authentication provider and dashboard layout display identity errors.
+    } finally {
+      accessRefreshInFlight.current = false;
+      setRefreshingAccess(false);
+    }
+  };
+
+  if (authLoading) {
+    return (
+      <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
+        <CircularProgress />
+      </Box>
+    );
+  }
+
+  if (!permissions.canView) {
+    return (
+      <Alert severity="warning">
+        You do not have permission to view companies.
+      </Alert>
+    );
+  }
+
+  if (refreshingAccess || companyList.errorStatus === 401 || companyList.errorStatus === 403) {
+    return (
+      <Box>
+        <Typography variant="h4" sx={{ fontWeight: 700, mb: 3 }}>
+          Company
+        </Typography>
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {companyList.error || 'Company access must be verified before continuing.'}
+        </Alert>
+        <Button onClick={handleRetryAccess} disabled={refreshingAccess || companyList.loading}>
+          Retry
+        </Button>
+      </Box>
+    );
+  }
+
+  // Unmount the content on access denial so stale dialogs cannot reopen later.
+  return <CompanyListContent permissions={permissions} companyList={companyList} />;
+}
+
+function CompanyListContent({ permissions, companyList }: {
+  permissions: ReturnType<typeof getCompanyPermissions>;
+  companyList: ReturnType<typeof useCompanies>;
+}) {
   const {
     searchInput,
     levels,
@@ -64,7 +118,7 @@ export default function CompanyPage() {
     updatePage,
     updatePageSize,
     refresh,
-  } = useCompanies();
+  } = companyList;
 
   // Dialog states
   const [createOpen, setCreateOpen] = useState(false);
@@ -77,35 +131,13 @@ export default function CompanyPage() {
   // Delete state
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteError, setDeleteError] = useState('');
-
-  // Wait for authentication restoration
-  if (authLoading) {
-    return (
-      <Box
-        sx={{
-          display: 'flex',
-          justifyContent: 'center',
-          py: 8,
-        }}
-      >
-        <CircularProgress />
-      </Box>
-    );
-  }
-
-  // Permission check
-  if (!permissions.canView) {
-    return (
-      <Alert severity="warning">
-        You do not have permission to view companies.
-      </Alert>
-    );
-  }
+  const deleteInFlight = useRef(false);
 
   // Delete company
   const handleDeleteCompany = async () => {
-    if (!deletingCompany || deleteLoading) return;
+    if (!permissions.canDelete || !deletingCompany || deleteInFlight.current) return;
 
+    deleteInFlight.current = true;
     setDeleteLoading(true);
     setDeleteError('');
 
@@ -123,6 +155,7 @@ export default function CompanyPage() {
             : 'Failed to delete company.',
       );
     } finally {
+      deleteInFlight.current = false;
       setDeleteLoading(false);
     }
   };
@@ -197,8 +230,11 @@ export default function CompanyPage() {
         loading={loading}
         canManage={permissions.canManage}
         mutationPending={deleteLoading}
-        onEditCompany={setEditingCompany}
+        onEditCompany={(company) => {
+          if (permissions.canUpdate && !deleteInFlight.current) setEditingCompany(company);
+        }}
         onDeleteCompany={(company) => {
+          if (!permissions.canDelete || deleteInFlight.current) return;
           setDeleteError('');
           setDeletingCompany(company);
         }}

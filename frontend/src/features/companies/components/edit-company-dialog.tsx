@@ -37,6 +37,7 @@ import type {
 } from '@/lib/api/companies';
 
 import { ApiError } from '@/lib/api/client';
+import { getCompanyTextError } from '@/features/companies/validation';
 
 interface EditCompanyDialogProps {
   open: boolean;
@@ -100,8 +101,19 @@ export default function EditCompanyDialog({
   const [submitError, setSubmitError] = useState('');
 
   const [submitting, setSubmitting] = useState(false);
+  const submissionInFlight = useRef(false);
 
   const isRootCompany = company.level === 1;
+  const textErrors = {
+    companyName: getCompanyTextError('companyName', form.companyName),
+    country: getCompanyTextError('country', form.country),
+    city: getCompanyTextError('city', form.city),
+  };
+
+  const handleClose = () => {
+    if (submissionInFlight.current) return;
+    onClose();
+  };
 
   const updateField = <K extends keyof FormValues>(
     field: K,
@@ -261,7 +273,7 @@ export default function EditCompanyDialog({
   ) => {
     event.preventDefault();
 
-    if (submitting) return;
+    if (submissionInFlight.current) return;
 
     setSubmitError('');
 
@@ -273,6 +285,12 @@ export default function EditCompanyDialog({
       setSubmitError(
         'Company name, country and city are required.',
       );
+      return;
+    }
+
+    const textError = Object.values(textErrors).find(Boolean);
+    if (textError) {
+      setSubmitError(textError);
       return;
     }
 
@@ -368,6 +386,7 @@ export default function EditCompanyDialog({
       return;
     }
 
+    submissionInFlight.current = true;
     setSubmitting(true);
 
     try {
@@ -387,6 +406,7 @@ export default function EditCompanyDialog({
             : 'Failed to update company.',
       );
     } finally {
+      submissionInFlight.current = false;
       setSubmitting(false);
     }
   };
@@ -394,9 +414,7 @@ export default function EditCompanyDialog({
   return (
     <Dialog
       open={open}
-      onClose={() => {
-        if (!submitting) onClose();
-      }}
+      onClose={handleClose}
       fullWidth
       maxWidth="sm"
     >
@@ -434,11 +452,8 @@ export default function EditCompanyDialog({
               required
               fullWidth
               size="small"
-              slotProps={{
-                htmlInput: {
-                  maxLength: 100,
-                },
-              }}
+              error={Boolean(textErrors.companyName)}
+              helperText={textErrors.companyName}
             />
 
             <FormControl fullWidth size="small">
@@ -540,11 +555,8 @@ export default function EditCompanyDialog({
               required
               fullWidth
               size="small"
-              slotProps={{
-                htmlInput: {
-                  maxLength: 100,
-                },
-              }}
+              error={Boolean(textErrors.country)}
+              helperText={textErrors.country}
             />
 
             <TextField
@@ -556,11 +568,8 @@ export default function EditCompanyDialog({
               required
               fullWidth
               size="small"
-              slotProps={{
-                htmlInput: {
-                  maxLength: 100,
-                },
-              }}
+              error={Boolean(textErrors.city)}
+              helperText={textErrors.city}
             />
 
             <TextField
@@ -615,7 +624,7 @@ export default function EditCompanyDialog({
 
         <DialogActions sx={{ px: 3, py: 2 }}>
           <Button
-            onClick={onClose}
+            onClick={handleClose}
             disabled={submitting}
             color="inherit"
           >

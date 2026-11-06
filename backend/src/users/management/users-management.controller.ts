@@ -13,6 +13,8 @@ import {
   Delete,
 } from '@nestjs/common';
 
+import type { AuditActorContext } from '../../audit-logs/audit-logs.service.js';
+
 import { CreateUserDto } from './dto/create-user.dto.js';
 
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard.js';
@@ -36,11 +38,7 @@ export class UsersManagementController {
         id: string,
         @Req() request: AuthenticatedRequest,
     ) {
-        return this.usersManagementService.changeStatus(
-            id,
-            'approve',
-            request.currentUser.id,
-        );
+        return this.usersManagementService.changeStatus(id, 'approve', this.getAuditContext(request));
     }
 
     @Patch(':id/reject')
@@ -49,11 +47,7 @@ export class UsersManagementController {
         id: string,
         @Req() request: AuthenticatedRequest,
     ) {
-        return this.usersManagementService.changeStatus(
-            id,
-            'reject',
-            request.currentUser.id,
-        );
+        return this.usersManagementService.changeStatus(id, 'reject', this.getAuditContext(request));
     }
 
     @Patch(':id/suspend')
@@ -62,11 +56,7 @@ export class UsersManagementController {
         id: string,
         @Req() request: AuthenticatedRequest,
     ) {
-        return this.usersManagementService.changeStatus(
-            id,
-            'suspend',
-            request.currentUser.id,
-        );
+        return this.usersManagementService.changeStatus(id, 'suspend', this.getAuditContext(request));
     }
 
     @Patch(':id/reactivate')
@@ -75,11 +65,7 @@ export class UsersManagementController {
         id: string,
         @Req() request: AuthenticatedRequest,
     ) {
-        return this.usersManagementService.changeStatus(
-            id,
-            'reactivate',
-            request.currentUser.id,
-        );
+        return this.usersManagementService.changeStatus(id, 'reactivate', this.getAuditContext(request));
     }
 
     @Get()
@@ -112,8 +98,9 @@ export class UsersManagementController {
                 whitelist: true,
                 forbidNonWhitelisted: true }))
         createUserDto: CreateUserDto,
+        @Req() request: AuthenticatedRequest,
     ) {
-        return this.usersManagementService.create(createUserDto);
+        return this.usersManagementService.create(createUserDto, this.getAuditContext(request));
     }
 
     @Patch(':id')
@@ -128,11 +115,7 @@ export class UsersManagementController {
                 dto: UpdateUserDto,
         @Req() request: AuthenticatedRequest,
     ) {
-        return this.usersManagementService.update(
-            id,
-            dto,
-            request.currentUser.id,
-        );
+        return this.usersManagementService.update(id, dto, this.getAuditContext(request));
     }
 
     @Delete('bulk')
@@ -145,10 +128,7 @@ export class UsersManagementController {
                 dto: DeleteUsersDto,
         @Req() request: AuthenticatedRequest,
     ) {
-        return this.usersManagementService.removeMany(
-            dto.ids,
-            request.currentUser.id,
-        );
+        return this.usersManagementService.removeMany(dto.ids, this.getAuditContext(request));
     }
 
     @Delete(':id')
@@ -157,10 +137,19 @@ export class UsersManagementController {
         id: string,
         @Req() request: AuthenticatedRequest,
     ) {
-        return this.usersManagementService.remove(
-            id,
-            request.currentUser.id,
-        );
+        return this.usersManagementService.remove(id, this.getAuditContext(request));
+    }
+
+    private getAuditContext(
+      request: AuthenticatedRequest,
+    ): AuditActorContext {
+      return {
+        actorId: request.currentUser.id,
+        actorName: request.currentUser.name ?? null,
+        actorRole: request.currentUser.role,
+        ipAddress: request.ip ?? null,
+        userAgent: request.get('user-agent') ?? null,
+      };
     }
 
 }
