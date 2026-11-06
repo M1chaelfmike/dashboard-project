@@ -74,12 +74,12 @@ export default function Header({
         handleThemeMenuClose();
     };
 
-    const themeIcon = 
-        mode === 'dark' 
+    const themeIcon =
+        mode === 'dark'
         ? <DarkModeOutlinedIcon />
         : mode === 'light'
         ? <LightModeOutlinedIcon />
-        : <BrightnessAutoOutlinedIcon />; 
+        : <BrightnessAutoOutlinedIcon />;
 
     return (
         <AppBar
@@ -116,7 +116,7 @@ export default function Header({
                 {/* Project Name */}
                 <Typography
                     variant="h6"
-                    fontWeight={700}
+                    sx={{ fontWeight: 700 }}
                     noWrap
                 >
                     Dashboard Project
@@ -132,7 +132,7 @@ export default function Header({
                         aria-label="Change appearance"
                     >
                         {themeIcon}
-                    </IconButton>   
+                    </IconButton>
                 </Tooltip>
                 <Menu
                     anchorEl={themeAnchorEl}

@@ -6,7 +6,8 @@ import { AppService } from './app.service.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { UsersModule } from './users/users.module.js';
 import { AuthModule } from './auth/auth.module.js';
-
+import { CompaniesModule } from './companies/companies.module.js';
+import { UsersManagementModule } from './users/management/users-management.module.js';
 @Module({
   imports: [
       ConfigModule.forRoot({
@@ -15,6 +16,8 @@ import { AuthModule } from './auth/auth.module.js';
       PrismaModule,
       UsersModule,
       AuthModule,
+      CompaniesModule,
+      UsersManagementModule,
     ],
   controllers: [AppController],
   providers: [AppService],

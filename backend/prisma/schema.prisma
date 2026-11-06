@@ -1,8 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
@@ -12,12 +7,79 @@ datasource db {
   provider = "postgresql"
 }
 
-model User {
-  id           String   @id @default(uuid()) @db.Uuid
-  email        String   @unique @db.VarChar(254)
-  passwordHash String   @map("password_hash") @db.VarChar(255)
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+// System permission roles
+enum UserRole {
+  ADMIN
+  MEMBER
+}
 
+// Account lifecycle status
+enum UserStatus {
+  PENDING_APPROVAL
+  ACTIVE
+  SUSPENDED
+  REJECTED
+}
+
+model User {
+  id String @id @default(uuid()) @db.Uuid
+
+  // Profile information
+  name  String? @db.VarChar(100)
+  email String  @unique @db.VarChar(254)
+
+  // Authentication
+  passwordHash String @map("password_hash") @db.VarChar(255)
+
+  // Authorization and account status
+  role   UserRole   @default(MEMBER)
+  status UserStatus @default(PENDING_APPROVAL)
+
+  // Timestamps
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Filtering indexes
+  @@index([role, status], map: "users_role_status_idx")
+  @@index([status], map: "users_status_idx")
+  // Name substring search (ILIKE)
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "users_name_trgm_idx")
   @@map("users")
+}
+
+model Company {
+  companyCode String @id @map("company_code") @db.VarChar(32)
+  companyName String @map("company_name") @db.VarChar(255)
+
+  level   Int
+  country String @db.VarChar(100)
+  city    String @db.VarChar(100)
+
+  foundedYear   Int @map("founded_year")
+  annualRevenue Int @map("annual_revenue")
+  employees     Int
+
+  // Relationships
+  ownRelationship    CompanyRelationship?  @relation("CompanyAsChild")
+  childRelationships CompanyRelationship[] @relation("CompanyAsParent")
+
+  // Indexes
+  @@index([level], map: "companies_level_idx")
+  @@index([companyName(ops: raw("gin_trgm_ops"))], type: Gin, map: "companies_name_trgm_idx")
+  @@map("companies")
+}
+
+model CompanyRelationship {
+  companyCode       String  @id @map("company_code") @db.VarChar(32)
+  parentCompanyCode String? @map("parent_company") @db.VarChar(32)
+
+  // Current company
+  company Company @relation("CompanyAsChild", fields: [companyCode], references: [companyCode], onDelete: Cascade)
+
+  // Parent company
+  parentCompany Company? @relation("CompanyAsParent", fields: [parentCompanyCode], references: [companyCode], onDelete: Restrict)
+
+  // Index
+  @@index([parentCompanyCode], map: "company_relationships_parent_idx")
+  @@map("company_relationships")
 }

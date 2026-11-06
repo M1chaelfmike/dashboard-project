@@ -26,32 +26,42 @@ type ApiRequestOptions = Omit<RequestInit, 'body'> & {
  * Extract error message from NestJS response.
  */
 
+
 function getErrorMessage(
     payload: unknown,
     fallback: string,
 ): string {
-    if(typeof payload !== 'object' && payload === null) {
+    if (
+        typeof payload !== 'object' ||
+        payload === null
+    ) {
         return fallback;
     }
 
     const data = payload as Record<string, unknown>;
-    if('message' in data){
+
+    if ('message' in data) {
         const message = data.message;
-        
-        if(typeof message === 'string'){
+
+        if (typeof message === 'string') {
             return message;
         }
 
-        if(Array.isArray(message)){
+        if (Array.isArray(message)) {
             return message.join(', ');
         }
     }
 
-    if('error' in data && typeof data.error === 'string'){
+    if (
+        'error' in data &&
+        typeof data.error === 'string'
+    ) {
         return data.error;
     }
-     return fallback;
+
+    return fallback;
 }
+
 
 /**
  * Generic API request function.

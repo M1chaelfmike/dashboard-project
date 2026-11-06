@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import NextLink from 'next/link';
 
 import { signupByEmail } from '@/lib/api/auth';
@@ -23,13 +23,22 @@ import VisibilityOff from '@mui/icons-material/VisibilityOff';
 import Visibility from '@mui/icons-material/Visibility';
 
 interface SignupErrors {
+  name?: string;
   email?: string;
   password?: string;
   confirmPassword?: string;
 }
 
+// Match the backend class-validator MinLength/MaxLength character counting.
+function getValidationLength(value: string): number {
+  const surrogatePairs = value.match(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g)?.length ?? 0;
+  const presentationSequences = value.match(/[^\uFE0F\uFE0E][\uFE0F\uFE0E]/g)?.length ?? 0;
+  return value.length - surrogatePairs - presentationSequences;
+}
+
 export default function SignupPage() {
   // Form state
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -38,10 +47,11 @@ export default function SignupPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [errors, setErrors] = useState<SignupErrors>({});
-  
+
   const [successMessage, setSuccessMessage] = useState('');
   const [apiError, setApiError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const submissionInFlight = useRef(false);
 
   // Clear one field's error
   const clearFieldError = (field: keyof SignupErrors) => {
@@ -57,6 +67,18 @@ export default function SignupPage() {
   const validateForm = (): boolean => {
     const newErrors: SignupErrors = {};
     const trimmedEmail = email.trim();
+    const trimmedName = name.trim();
+    const nameLength = getValidationLength(trimmedName);
+    const passwordLength = getValidationLength(password);
+
+    // Name validation
+    if(!trimmedName) {
+        newErrors.name = 'Name is required.';
+    }else if(nameLength < 2) {
+        newErrors.name = 'Name must contain at least 2 characters.';
+    }else if(nameLength > 100) {
+        newErrors.name = 'Name must not exceed 100 characters.';
+    }
 
     // Email validation
     if (!trimmedEmail) {
@@ -70,10 +92,10 @@ export default function SignupPage() {
     // Password validation
     if (!password) {
       newErrors.password = 'Password is required.';
-    } else if (password.length > 128) {
+    } else if (passwordLength > 128) {
       newErrors.password = 'Password must not exceed 128 characters.';
-    } else if (password.length < 8) {
-      newErrors.password = 'Password must contain at least 8 characters long.';
+    } else if (passwordLength < 8) {
+      newErrors.password = 'Password must contain at least 8 characters.';
     }
 
     // Confirm password validation
@@ -92,32 +114,37 @@ export default function SignupPage() {
       event: FormEvent<HTMLFormElement>,
     ) => {
       event.preventDefault();
-    
+      if (submissionInFlight.current) {
+        return;
+      }
+
       setSuccessMessage('');
       setApiError('');
-    
+
       // Step 1: Frontend validation
       if (!validateForm()) {
         return;
       }
-    
+
       // Step 2: Start submitting
+      submissionInFlight.current = true;
       setIsSubmitting(true);
-    
+
       try {
         // Step 3: Call backend API
         const result = await signupByEmail({
+          name: name.trim(),
           email: email.trim(),
           password,
         });
-    
+
         // Step 4: Handle success response
         setSuccessMessage(result.message);
-    
+
         // Clear password fields after successful registration
         setPassword('');
         setConfirmPassword('');
-    
+
       } catch (error) {
         // Step 5: Handle API errors
         if (error instanceof ApiError) {
@@ -129,6 +156,7 @@ export default function SignupPage() {
         }
       } finally {
         // Step 6: Finish submitting
+        submissionInFlight.current = false;
         setIsSubmitting(false);
       }
     };
@@ -156,8 +184,8 @@ export default function SignupPage() {
             <Stack spacing={3}>
                 {/* Header */}
                 <Box sx={{ textAlign: 'center' }}>
-                    <Typography 
-                        variant="h5" 
+                    <Typography
+                        variant="h5"
                         sx={{ fontWeight: 700 }}
                     >
                         Create Account
@@ -171,9 +199,17 @@ export default function SignupPage() {
                 </Box>
                 { /* Feedback */}
                 {successMessage && (
-                    <Alert severity="success">
-                        {successMessage}
-                    </Alert>
+                  <Alert severity="success">
+                    <Typography sx={{ fontWeight: 600 }}>
+                      Registration Submitted
+                    </Typography>
+
+                    <Typography variant="body2" sx={{ mt: 0.5 }}>
+                      Your account is awaiting administrator approval.
+                      You will be able to sign in once your account
+                      has been activated.
+                    </Typography>
+                  </Alert>
                 )}
                 {apiError && (
                     <Alert severity="error">
@@ -182,12 +218,23 @@ export default function SignupPage() {
                 )}
 
                 {/* Signup Form */}
-                <Box 
-                    component="form" 
-                    onSubmit={handleSubmit} 
-                    noValidate
-                    >
+                {!successMessage && (
+                  <Box component="form" onSubmit={handleSubmit} noValidate>
                     <Stack spacing={2.5}>
+                        {/* Name Field */}
+                        <TextField
+                            label="Full Name"
+                            placeholder="Enter your full name"
+                            value={name}
+                            onChange={(event) => {
+                                setName(event.target.value);
+                                clearFieldError('name');
+                            }}
+                            error={Boolean(errors.name)}
+                            helperText={errors.name}
+                            autoComplete="name"
+                            fullWidth
+                        />
                         {/* Email Field */}
                         <TextField
                             label="Email"
@@ -217,7 +264,7 @@ export default function SignupPage() {
                             error={Boolean(errors.password)}
                             helperText={
                                 errors.password??
-                                'User 8-128 charcters.'
+                                'Use 8-128 characters.'
                             }
                             autoComplete="new-password"
                             fullWidth
@@ -231,8 +278,8 @@ export default function SignupPage() {
                                                 }
                                                 edge="end"
                                                 aria-label={
-                                                    showPassword 
-                                                    ? 'Hide password' 
+                                                    showPassword
+                                                    ? 'Hide password'
                                                     : 'Show password'
                                                 }
                                             >
@@ -290,7 +337,7 @@ export default function SignupPage() {
                                     ),
                                 },
                             }}
-                        />      
+                        />
                         {/* Submit */}
                         <Button
                             type="submit"
@@ -304,7 +351,7 @@ export default function SignupPage() {
                         </Button>
                     </Stack>
                 </Box>
-
+)}
                 {/* Login Link */}
                 <Box sx={{ textAlign: 'center' }}>
                     <Typography
@@ -329,4 +376,3 @@ export default function SignupPage() {
 
 
 }
-  

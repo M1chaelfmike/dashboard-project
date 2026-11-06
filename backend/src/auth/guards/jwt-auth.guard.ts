@@ -1,6 +1,7 @@
 import {
   CanActivate,
   ExecutionContext,
+  ForbiddenException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -34,7 +35,7 @@ export class JwtAuthGuard implements CanActivate {
         .getRequest<AuthenticatedRequest>();
 
         const token: unknown = request.cookies?.accessToken;
-        
+
         if(typeof token !== 'string'){
             throw new UnauthorizedException('Authentication required.',);
         }
@@ -60,6 +61,10 @@ export class JwtAuthGuard implements CanActivate {
 
         if(!user){
             throw new UnauthorizedException('User not found.',);
+        }
+
+        if(user.status !== 'ACTIVE'){
+            throw new ForbiddenException('Account is not active.',);
         }
 
         request.currentUser = user;

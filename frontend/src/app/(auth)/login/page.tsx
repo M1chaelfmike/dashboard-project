@@ -69,34 +69,16 @@ export default function LoginPage() {
   // Form submission
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    
+
     if (isSubmitting) {
-      return; 
+      return;
     }
 
     setFormMessage('');
     setApiError('');
 
     // 1. Frontend validation
-    const nextErrors:{
-      email?: string;
-      password?: string;
-    } = {};
-
-    const normalizedEmail = email.trim();
-
-    if(!normalizedEmail){
-      nextErrors.email = 'Email is required.';
-    }else if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)){
-      nextErrors.email = 'Please enter a valid email address.';
-    }
-
-    if(!password){
-      nextErrors.password = 'Password is required.';
-    }
-
-    setErrors(nextErrors);
-    if(Object.keys(nextErrors).length > 0){
+    if (!validateForm()) {
       return;
     }
 
@@ -104,7 +86,7 @@ export default function LoginPage() {
     setIsSubmitting(true);
     try{
       await login({
-        email: normalizedEmail,
+        email: email.trim(),
         password,
       });
       // 3. Login successful
@@ -143,10 +125,10 @@ export default function LoginPage() {
       >
         <Stack spacing={3}>
           {/* Page Header */}
-          <Box 
+          <Box
             sx={{textAlign:"center"}}>
-            <Typography 
-            variant="h4" 
+            <Typography
+            variant="h4"
             sx={{ fontWeight: 700 }}
             >
               Welcome Back
@@ -252,7 +234,7 @@ export default function LoginPage() {
           </Box>
 
           {/* Sign Up Link */}
-          <Box 
+          <Box
             sx = {{textAlign:"center"}}>
             <Typography
               variant="body2"

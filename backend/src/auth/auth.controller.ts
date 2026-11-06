@@ -5,10 +5,12 @@ import {
   HttpCode,
   HttpStatus,
   Post,
+  Patch,
   Req,
   Res,
   UnauthorizedException,
   UseGuards,
+  ValidationPipe,
 } from '@nestjs/common';
 
 import type { Response } from 'express';
@@ -16,6 +18,7 @@ import type { Response } from 'express';
 import { AuthService } from './auth.service.js';
 import { SignupByEmailDto } from './dto/signup-by-email.dto.js';
 import { LoginByEmailDto } from './dto/login-by-email.dto.js';
+import { UpdateMyProfileDto } from './dto/update-my-profile.dto.js';
 
 import { JwtAuthGuard } from './guards/jwt-auth.guard.js';
 import type { AuthenticatedRequest } from './guards/jwt-auth.guard.js';
@@ -25,7 +28,13 @@ export class AuthController {
     constructor(private readonly authService: AuthService,) {}
 
     @Post('signup')
-    async signupByEmail(@Body() dto: SignupByEmailDto) {
+    async signupByEmail(@Body(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    ) dto: SignupByEmailDto) {
         return this.authService.signupByEmail(dto);
     }
 
@@ -49,7 +58,7 @@ export class AuthController {
             message: 'Login successful.',
             user,
         };
-    
+
     }
 
 
@@ -66,6 +75,27 @@ export class AuthController {
             user,
         };
     }
+
+
+    @UseGuards(JwtAuthGuard)
+    @Patch('me')
+    async updateMyProfile(
+        @Req() request: AuthenticatedRequest,
+        @Body(
+            new ValidationPipe({
+                transform: true,
+                whitelist: true,
+                forbidNonWhitelisted: true,
+            }),
+        )
+        dto: UpdateMyProfileDto,
+    ) {
+        return this.authService.updateMyProfile(
+            request.currentUser.id,
+            dto,
+        );
+    }
+
 
     @Post('logout')
     @HttpCode(HttpStatus.OK)

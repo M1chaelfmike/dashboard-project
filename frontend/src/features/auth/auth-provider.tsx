@@ -21,9 +21,9 @@ import {
 
 import { ApiError } from '@/lib/api/client';
 
-export type AuthStatus = 
-| 'loading' 
-| 'authenticated' 
+export type AuthStatus =
+| 'loading'
+| 'authenticated'
 | 'unauthenticated'
 | 'error';
 
@@ -34,6 +34,7 @@ export interface AuthContextValue {
     isLoading: boolean;
     isAuthenticated: boolean;
     error: string | null;
+    updateUser: (updatedUser: AuthUser) => void;
 
     login: (data: LoginByEmailRequest) => Promise<AuthResponse>;
     logout: () => Promise<void>;
@@ -50,8 +51,8 @@ interface AuthProviderProps {
     children: ReactNode;
 }
 
-export function AuthProvider({ 
-    children, 
+export function AuthProvider({
+    children,
 }: AuthProviderProps) {
     const [user, setUser] = useState<AuthUser | null>(null);
     const [status, setStatus] = useState<AuthStatus>('loading');
@@ -61,26 +62,25 @@ export function AuthProvider({
     const requestIdRef = useRef(0);
 
     //get ccurrent authenticated user
-    const refreshUser = useCallback(async (): Promise<AuthUser | null> => {
-        const requestId = ++requestIdRef.current;
+   const refreshUser = useCallback(async (): Promise<AuthUser | null> => {
+       const requestId = ++requestIdRef.current;
 
-        setStatus('loading');
-        setError(null);
 
         try{
             const result = await getCurrentUser();
 
-            if(requestId !== requestIdRef.current) 
+            if(requestId !== requestIdRef.current)
                 return null;
-            
+
             setUser(result.user);
             setStatus('authenticated');
+            setError(null);
             return result.user;
         }catch(err){
-            if(requestId !== requestIdRef.current) 
+            if(requestId !== requestIdRef.current)
                 return null;
             setUser(null);
-            
+
             // 401
             if(err instanceof ApiError && err.status === 401){
                 setStatus('unauthenticated');
@@ -89,7 +89,7 @@ export function AuthProvider({
                 return null;
             }
 
-            const message = 
+            const message =
             err instanceof ApiError
             ? err.message
             : 'Unable to connect to the server.';
@@ -127,26 +127,91 @@ export function AuthProvider({
         setError(null);
     }, []);
 
+    // Update global authenticated user information
+    const updateUser = useCallback((
+        updatedUser: AuthUser,
+    ): void => {
+
+        // Invalidate older /me requests
+        requestIdRef.current += 1;
+
+        setUser(updatedUser);
+        setStatus('authenticated');
+        setError(null);
+
+    }, []);
+
+    // Restore authentication state on application startup
     // Restore authentication state on application startup
     useEffect(() => {
-        void refreshUser().catch(() => {
-            // Error state is already set in refreshUser
-        });
-    }, [refreshUser]);
+        let isActive = true;
+
+        const requestId = ++requestIdRef.current;
+
+        const restoreAuthentication = async () => {
+            try {
+                const result = await getCurrentUser();
+
+                if (!isActive || requestId !== requestIdRef.current) {
+                    return;
+                }
+
+                setUser(result.user);
+                setStatus('authenticated');
+                setError(null);
+
+            } catch (err: unknown) {
+                if (!isActive || requestId !== requestIdRef.current) {
+                    return;
+                }
+
+                setUser(null);
+
+                if (err instanceof ApiError && err.status === 401) {
+                    setStatus('unauthenticated');
+                    setError(null);
+                    return;
+                }
+
+                const message =
+                    err instanceof ApiError
+                        ? err.message
+                        : 'Unable to connect to the server.';
+
+                setStatus('error');
+                setError(message);
+            }
+        };
+
+        void restoreAuthentication();
+
+        return () => {
+            isActive = false;
+            requestIdRef.current += 1;
+        };
+    }, []);
 
     // Context value
     const value = useMemo<AuthContextValue>(() => ({
         user,
         status,
         isLoading: status === 'loading',
-        isAuthenticated: 
-        status === 'authenticated' && user !== null,
+        isAuthenticated:
+            status === 'authenticated' && user !== null,
         error,
         login,
         logout,
         refreshUser,
-    }), [user, status, error, login, logout, refreshUser]);
-
+        updateUser,
+    }), [
+        user,
+        status,
+        error,
+        login,
+        logout,
+        refreshUser,
+        updateUser,
+    ]);
     return (
         <AuthContext.Provider value={value}>
             {children}

@@ -33,3 +33,14 @@ npm-debug.log*
 # OS
 .DS_Store
 Thumbs.db
+
+# Local source-diff snapshots
+/account-status-diff.txt
+/account-status-new-files.txt
+
+# Keep local test suites and reports out of published source changes.
+/frontend/test/
+/backend/test/
+**/*.spec.ts
+**/*.test.ts
+**/*.test.tsx
