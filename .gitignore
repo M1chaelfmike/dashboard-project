@@ -44,3 +44,6 @@ Thumbs.db
 **/*.spec.ts
 **/*.test.ts
 **/*.test.tsx
+
+# Private local database backups (may contain account hashes and business data).
+/backups/

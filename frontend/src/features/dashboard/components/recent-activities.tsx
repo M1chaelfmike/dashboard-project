@@ -34,6 +34,7 @@ import {
   getRecentActivities,
   type RecentActivity,
 } from '@/lib/api/dashboard';
+import { ApiError } from '@/lib/api/client';
 
 // ==================== Types ====================
 
@@ -47,6 +48,10 @@ interface ActionMeta {
   label: string;
   color: ActivityColor;
   Icon: ElementType;
+}
+
+interface RecentActivitiesProps {
+  onAccessDenied?: (error: ApiError) => void;
 }
 
 // ==================== Action Metadata ====================
@@ -168,7 +173,7 @@ function formatActivityDate(value: string): string {
 
 // ==================== Component ====================
 
-export default function RecentActivities() {
+export default function RecentActivities({ onAccessDenied }: RecentActivitiesProps) {
   const theme = useTheme();
 
   const [activities, setActivities] =
@@ -192,11 +197,14 @@ export default function RecentActivities() {
         }
       } catch (err: unknown) {
         if (!cancelled) {
+          const accessDenied = err instanceof ApiError && (err.status === 401 || err.status === 403);
+          if (accessDenied) setActivities([]);
           setError(
             err instanceof Error
               ? err.message
               : 'Failed to load recent activities.',
           );
+          if (accessDenied) onAccessDenied?.(err);
         }
       } finally {
         if (!cancelled) {
@@ -210,7 +218,7 @@ export default function RecentActivities() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [onAccessDenied]);
 
   return (
     <Paper
@@ -391,11 +399,17 @@ export default function RecentActivities() {
                         alignItems: 'center',
                         flexWrap: 'wrap',
                         gap: 0.8,
+                        minWidth: 0,
                       }}
                     >
                       <Typography
                         variant="body2"
-                        sx={{ fontWeight: 700 }}
+                        sx={{
+                          fontWeight: 700,
+                          minWidth: 0,
+                          maxWidth: '100%',
+                          overflowWrap: 'anywhere',
+                        }}
                       >
                         {activity.actorName || 'System'}
                       </Typography>
