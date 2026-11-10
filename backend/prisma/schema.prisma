@@ -139,3 +139,22 @@ model AuditLog {
   @@index([category, createdAt(sort: Desc)], map: "audit_logs_category_created_at_idx")
   @@map("audit_logs")
 }
+
+
+model DashboardCompanySnapshot {
+  id String @id @default(uuid()) @db.Uuid
+
+  // Summary statistics
+  totalCompanies Int @map("total_companies")
+  totalRevenue BigInt @map("total_revenue")
+  totalCountries Int @map("total_countries")
+  totalEmployees BigInt @map("total_employees")
+
+  // Snapshot creation time
+  capturedAt DateTime @default(now()) @map("captured_at") @db.Timestamptz(6)
+
+  // Query recent snapshots efficiently
+  @@index([capturedAt], map: "dashboard_company_snapshots_captured_at_idx")
+
+  @@map("dashboard_company_snapshots")
+}

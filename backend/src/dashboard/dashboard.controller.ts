@@ -38,4 +38,16 @@ export class DashboardController {
 
     return this.dashboardService.getRecentActivities();
   }
+
+  /**
+  * Company analytics for dashboard charts.
+  * Accessible to authenticated ADMIN and MEMBER users.
+  */
+  @Get('company-analytics')
+  getCompanyAnalytics() {
+    return this.dashboardService.getCompanyAnalytics();
+  }
+
+
+
 }

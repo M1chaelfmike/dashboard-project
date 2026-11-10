@@ -28,6 +28,97 @@ export class CompaniesService {
     private readonly auditLogsService: AuditLogsService,
   ) {}
 
+  private async withCompanyTransaction<T>(
+    operation: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    return this.prisma.$transaction(async (tx) => {
+      // All company writers share this transaction-scoped lock across processes.
+      // Acquire it before any company reads or row locks; subsequent statements
+      // then see the previous writer's committed changes under ReadCommitted.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1818326126, 1)`;
+      return operation(tx);
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
+  }
+
+
+    /**
+     * Record a company KPI snapshot within the current transaction.
+     *
+     * A snapshot is written only when the summary values change.
+     * No separate transaction or database connection is created.
+     */
+    private async captureCompanySnapshot(
+      tx: Prisma.TransactionClient,
+    ): Promise<void> {
+      // 1. Calculate the four KPI values
+      const totals = await tx.company.aggregate({
+        _count: {
+          _all: true,
+        },
+        _sum: {
+          annualRevenue: true,
+          employees: true,
+        },
+      });
+
+      const countries = await tx.company.groupBy({
+        by: ['country'],
+      });
+
+      const normalizedCountries = new Set(
+        countries
+          .map((item) => item.country.trim().toLowerCase())
+          .filter((country) => country.length > 0),
+      );
+
+      const current = {
+        totalCompanies: totals._count._all,
+        totalRevenue: BigInt(totals._sum.annualRevenue ?? 0),
+        totalCountries: normalizedCountries.size,
+        totalEmployees: BigInt(totals._sum.employees ?? 0),
+      };
+
+      // 2. Get the latest snapshot
+      const previous =
+        await tx.dashboardCompanySnapshot.findFirst({
+          orderBy: [
+            { capturedAt: 'desc' },
+            { id: 'desc' },
+          ],
+        });
+
+      // 3. Skip unchanged KPI values
+      if (
+        previous &&
+        previous.totalCompanies === current.totalCompanies &&
+        previous.totalRevenue === current.totalRevenue &&
+        previous.totalCountries === current.totalCountries &&
+        previous.totalEmployees === current.totalEmployees
+      ) {
+        return;
+      }
+
+      // Transaction start time can precede a writer that committed before us.
+      // Use the database clock and advance beyond existing history at the same
+      // millisecond precision returned by Prisma, including old microseconds.
+      const [timestamp] = await tx.$queryRaw<Array<{ capturedAt: Date }>>`
+        SELECT GREATEST(
+          date_trunc('milliseconds', clock_timestamp()),
+          COALESCE(
+            date_trunc('milliseconds', MAX(captured_at)) + INTERVAL '1 millisecond',
+            '-infinity'::timestamptz
+          )
+        ) AS "capturedAt"
+        FROM dashboard_company_snapshots
+      `;
+
+      // 4. Persist the new snapshot
+      await tx.dashboardCompanySnapshot.create({
+        data: { ...current, capturedAt: timestamp.capturedAt },
+      });
+    }
+
+
   /**
    * Record failed company operations independently.
    * Failure audit must not replace the original business error.
@@ -279,7 +370,7 @@ export class CompaniesService {
         );
       }
 
-      const company = await this.prisma.$transaction(
+      const company = await this.withCompanyTransaction(
         async (tx) => {
           // 1. Check duplicate company code
           const existing = await tx.company.findUnique({
@@ -376,6 +467,8 @@ export class CompaniesService {
             tx,
           );
 
+          await this.captureCompanySnapshot(tx);
+
           return created;
         },
       );
@@ -441,7 +534,7 @@ export class CompaniesService {
         );
       }
 
-      return await this.prisma.$transaction(async (tx) => {
+      return await this.withCompanyTransaction(async (tx) => {
         // 1. Find existing company and relationship
         const current = await tx.company.findUnique({
           where: { companyCode },
@@ -671,6 +764,9 @@ export class CompaniesService {
           tx,
         );
 
+        // Capture KPI changes after updating the company
+        await this.captureCompanySnapshot(tx);
+
         // 10. Return existing response structure
         return {
           ...updated,
@@ -722,7 +818,7 @@ export class CompaniesService {
     context: AuditActorContext,
   ) {
     try {
-      return await this.prisma.$transaction(async (tx) => {
+      return await this.withCompanyTransaction(async (tx) => {
         // 1. Get company snapshot before deletion
         const company = await tx.company.findUnique({
           where: { companyCode },
@@ -809,6 +905,8 @@ export class CompaniesService {
           },
           tx,
         );
+        // Record company statistics after deletion
+        await this.captureCompanySnapshot(tx);
 
         return {
           message: 'Company deleted successfully.',
